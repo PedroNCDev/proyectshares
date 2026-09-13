@@ -73,15 +73,31 @@ fetch(`/api/projects/${code}/info`).then(r => r.json()).then(info => {
 
 function renderActivity(list) {
   const el = document.getElementById('activityLog');
-  el.innerHTML = list.slice(-30).reverse().map(a =>
-    `<div><b>${escapeHtml(a.user)}</b> ${escapeHtml(a.action)}</div>`
-  ).join('') || '<em>Sin actividad todavia</em>';
+  el.innerHTML = '';
+  const items = list.slice(-30).reverse();
+  if (!items.length) { el.innerHTML = '<em>Sin actividad todavia</em>'; return; }
+  items.forEach(a => el.appendChild(buildActivityLine(a)));
+}
+function buildActivityLine(a) {
+  const div = document.createElement('div');
+  div.className = 'commit-line';
+  const text = document.createElement('span');
+  text.className = 'commit-text';
+  text.innerHTML = `<b>${escapeHtml(a.user)}</b> ${escapeHtml(a.verb || a.action || '')} ${escapeHtml(a.path || '')}`;
+  div.appendChild(text);
+  if (a.path && a.type === 'file') {
+    const btn = document.createElement('button');
+    btn.className = 'btn-goto';
+    btn.textContent = 'Ir';
+    btn.onclick = () => openFile(a.path);
+    div.appendChild(btn);
+  }
+  return div;
 }
 socket.on('activity-entry', entry => {
   const el = document.getElementById('activityLog');
-  const div = document.createElement('div');
-  div.innerHTML = `<b>${escapeHtml(entry.user)}</b> ${escapeHtml(entry.action)}`;
-  el.prepend(div);
+  if (el.querySelector('em')) el.innerHTML = '';
+  el.prepend(buildActivityLine(entry));
 });
 
 // ---- Usuarios conectados ----
@@ -105,21 +121,86 @@ socket.on('users-update', list => {
 });
 
 // ---- Arbol de archivos ----
-fetch(`/api/projects/${code}/tree`).then(r => r.json()).then(data => {
-  renderTree(data.tree, document.getElementById('fileTree'));
-});
+const expandedFolders = new Set();
+
+function loadTree() {
+  fetch(`/api/projects/${code}/tree`).then(r => r.json()).then(data => {
+    const container = document.getElementById('fileTree');
+    container.innerHTML = '';
+    const rootAddRow = document.createElement('div');
+    rootAddRow.className = 'root-add-row';
+    rootAddRow.appendChild(buildAddButtonAndPanel(''));
+    container.appendChild(rootAddRow);
+    renderTree(data.tree, container);
+  });
+}
+loadTree();
+socket.on('tree-changed', () => loadTree());
+
+function buildAddButtonAndPanel(parentPath) {
+  const wrap = document.createElement('div');
+  const btnAdd = document.createElement('button');
+  btnAdd.className = 'btn-add';
+  btnAdd.textContent = '+ Agregar';
+  const panel = document.createElement('div');
+  panel.className = 'add-panel';
+  panel.innerHTML = `
+    <input type="text" placeholder="Nombre" maxlength="80" />
+    <div class="add-panel-actions">
+      <button class="secondary" data-type="folder">📁 Carpeta</button>
+      <button class="secondary" data-type="file">📄 Archivo</button>
+    </div>`;
+  btnAdd.onclick = (e) => { e.stopPropagation(); panel.classList.toggle('open'); };
+  const input = panel.querySelector('input');
+  panel.querySelectorAll('[data-type]').forEach(b => {
+    b.onclick = async (e) => {
+      e.stopPropagation();
+      const name = input.value.trim();
+      if (!name) { input.focus(); return; }
+      const type = b.getAttribute('data-type');
+      const res = await fetch(`/api/projects/${code}/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parentPath, name, type, username })
+      });
+      const data = await res.json();
+      if (!res.ok) return alert(data.error || 'No se pudo crear');
+      input.value = '';
+      panel.classList.remove('open');
+      if (parentPath) expandedFolders.add(parentPath);
+      loadTree();
+      if (type === 'file') openFile(data.path);
+    };
+  });
+  wrap.appendChild(btnAdd);
+  wrap.appendChild(panel);
+  return wrap;
+}
 
 function renderTree(nodes, container) {
   nodes.forEach(node => {
     if (node.type === 'folder') {
+      const row = document.createElement('div');
+      row.className = 'tree-row';
       const btn = document.createElement('button');
       btn.className = 'tree-folder-btn';
       btn.textContent = '📁 ' + node.name;
       const childrenDiv = document.createElement('div');
       childrenDiv.className = 'tree-children';
+      if (expandedFolders.has(node.path)) childrenDiv.classList.add('open');
+      btn.onclick = () => {
+        childrenDiv.classList.toggle('open');
+        if (childrenDiv.classList.contains('open')) expandedFolders.add(node.path);
+        else expandedFolders.delete(node.path);
+      };
+      row.appendChild(btn);
+      const addWrap = buildAddButtonAndPanel(node.path);
+      const addBtn = addWrap.querySelector('.btn-add');
+      const addPanel = addWrap.querySelector('.add-panel');
+      row.appendChild(addBtn);
+      container.appendChild(row);
+      container.appendChild(addPanel);
       renderTree(node.children, childrenDiv);
-      btn.onclick = () => childrenDiv.classList.toggle('open');
-      container.appendChild(btn);
       container.appendChild(childrenDiv);
     } else {
       const btn = document.createElement('button');
@@ -130,6 +211,7 @@ function renderTree(nodes, container) {
     }
   });
 }
+
 
 // ---- Abrir / editar / guardar archivo ----
 const editor = document.getElementById('editor');
