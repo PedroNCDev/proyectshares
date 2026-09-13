@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>ProyectShares - Home</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div class="topbar">
+  <div>👤 <span id="userLabel"></span></div>
+  <div style="display:flex;align-items:center;gap:10px;">
+    <label for="cursorColor" style="font-size:13px;color:#9db1cf;">Color de mouse</label>
+    <input type="color" id="cursorColor" style="width:40px;padding:0;height:32px;" />
+  </div>
+</div>
+
+<div class="home-actions">
+  <div class="action-box">
+    <h3>Nuevo proyecto</h3>
+    <p style="font-size:13px;color:#9db1cf;">Elegi una carpeta de tu compu para subirla al servidor</p>
+    <button id="btnNuevo">Nuevo proyecto</button>
+    <input type="file" id="folderInput" webkitdirectory directory multiple style="display:none" />
+  </div>
+  <div class="action-box">
+    <h3>Join Proyect</h3>
+    <input type="text" id="joinCode" placeholder="Codigo del proyecto" maxlength="12" />
+    <button id="btnJoin" class="secondary">Unirme</button>
+  </div>
+</div>
+
+<script src="/bg-code.js"></script>
+<script>
+  const username = localStorage.getItem('username');
+  if (!username) location.href = '/index.html';
+  document.getElementById('userLabel').textContent = username;
+
+  const colorInput = document.getElementById('cursorColor');
+  colorInput.value = localStorage.getItem('cursorColor') || '#3ddc84';
+  colorInput.onchange = () => localStorage.setItem('cursorColor', colorInput.value);
+
+  const folderInput = document.getElementById('folderInput');
+  document.getElementById('btnNuevo').onclick = () => folderInput.click();
+
+  folderInput.addEventListener('change', async () => {
+    const files = Array.from(folderInput.files);
+    if (!files.length) return;
+    const fd = new FormData();
+    const paths = [];
+    let projectName = 'Proyecto';
+    files.forEach(f => {
+      const rel = f.webkitRelativePath || f.name;
+      if (!projectName || projectName === 'Proyecto') projectName = rel.split('/')[0];
+      paths.push(rel);
+      fd.append('files', f, rel);
+    });
+    fd.append('paths', JSON.stringify(paths));
+    fd.append('projectName', projectName);
+
+    const btn = document.getElementById('btnNuevo');
+    btn.disabled = true;
+    btn.textContent = 'Subiendo...';
+    try {
+      const res = await fetch('/api/projects', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error');
+      sessionStorage.setItem('projectCode', data.code);
+      location.href = `/project.html`;
+    } catch (err) {
+      alert('No se pudo crear el proyecto: ' + err.message);
+      btn.disabled = false;
+      btn.textContent = 'Nuevo proyecto';
+    }
+  });
+
+  document.getElementById('btnJoin').onclick = async () => {
+    const code = document.getElementById('joinCode').value.trim().toUpperCase();
+    if (!code) return alert('Poné un código');
+    try {
+      const res = await fetch(`/api/projects/${code}/join`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'No encontrado');
+      sessionStorage.setItem('projectCode', code);
+      location.href = `/project.html`;
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+</script>
+</body>
+</html>

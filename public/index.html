@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>ProyectShares</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div class="center-screen">
+  <div class="card">
+    <h1>Poner nombre</h1>
+    <input type="text" id="username" placeholder="Tu usuario" maxlength="24" />
+    <button id="btnAceptar">Aceptar</button>
+  </div>
+</div>
+<script src="/bg-code.js"></script>
+<script>
+  const input = document.getElementById('username');
+  const saved = localStorage.getItem('username');
+  if (saved) input.value = saved;
+
+  function aceptar() {
+    const v = input.value.trim();
+    if (!v) { alert('Escribe un nombre'); return; }
+    localStorage.setItem('username', v);
+    if (!localStorage.getItem('cursorColor')) {
+      localStorage.setItem('cursorColor', '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0'));
+    }
+    location.href = '/home.html';
+  }
+  document.getElementById('btnAceptar').onclick = aceptar;
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') aceptar(); });
+</script>
+</body>
+</html>

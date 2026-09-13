@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>ProyectShares - Proyecto</title>
+<link rel="stylesheet" href="/style.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" />
+</head>
+<body style="background:#0a0e16;">
+<div class="topbar">
+  <div>📁 <span id="projName">Proyecto</span> · <span id="projCode" style="color:#9db1cf;font-size:12px;"></span></div>
+  <div>👤 <span id="userLabel"></span></div>
+</div>
+
+<div class="project-layout">
+  <div class="sidebar">
+    <div class="activity-log" id="activityLog"><em>Actividad reciente...</em></div>
+    <div class="chat-box">
+      <div class="chat-messages" id="chatMessages"></div>
+      <div class="chat-input-row">
+        <input type="text" id="chatInput" placeholder="Escribi un mensaje..." maxlength="500" />
+        <button id="btnChatSend">Enviar</button>
+      </div>
+    </div>
+    <div class="users-list" id="usersList"></div>
+  </div>
+
+  <div class="main-area">
+    <div class="file-tree" id="fileTree"></div>
+
+    <div class="editor-area">
+      <div class="editor-header">
+        <span id="currentFileLabel">Elegí un archivo</span>
+        <div>
+          <button id="btnCompartir" class="secondary" style="display:none;">Compartir Dirección</button>
+          <button id="btnGuardar">Guardar</button>
+        </div>
+      </div>
+      <div class="editor-wrapper" id="editorWrapper">
+        <pre id="highlightLayer" aria-hidden="true"><code id="highlightCode" class="language-csharp"></code></pre>
+        <textarea id="editor" spellcheck="false" placeholder="Selecciona un archivo del árbol para editarlo..."></textarea>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-csharp.min.js"></script>
+<script>
+const code = (sessionStorage.getItem('projectCode') || '').toUpperCase();
+const username = localStorage.getItem('username');
+const myColor = localStorage.getItem('cursorColor') || '#3ddc84';
+if (!username) location.href = '/index.html';
+if (!code) location.href = '/home.html';
+
+document.getElementById('userLabel').textContent = username;
+document.getElementById('projCode').textContent = code;
+
+let currentFile = null;
+let dirty = false;
+const remoteCursors = {}; // socketId -> {el, username, color, file}
+let usersById = {};
+
+const socket = io();
+socket.emit('join-project', { code, username, color: myColor });
+
+// ---- Info + actividad inicial ----
+fetch(`/api/projects/${code}/info`).then(r => r.json()).then(info => {
+  if (info.name) document.getElementById('projName').textContent = info.name;
+  renderActivity(info.activity || []);
+});
+
+function renderActivity(list) {
+  const el = document.getElementById('activityLog');
+  el.innerHTML = list.slice(-30).reverse().map(a =>
+    `<div><b>${escapeHtml(a.user)}</b> ${escapeHtml(a.action)}</div>`
+  ).join('') || '<em>Sin actividad todavia</em>';
+}
+socket.on('activity-entry', entry => {
+  const el = document.getElementById('activityLog');
+  const div = document.createElement('div');
+  div.innerHTML = `<b>${escapeHtml(entry.user)}</b> ${escapeHtml(entry.action)}`;
+  el.prepend(div);
+});
+
+// ---- Usuarios conectados ----
+socket.on('users-update', list => {
+  usersById = {};
+  const el = document.getElementById('usersList');
+  el.innerHTML = '';
+  list.forEach(u => {
+    usersById[u.username] = u;
+    const item = document.createElement('div');
+    item.className = 'user-item';
+    item.innerHTML = `<span class="user-dot" style="background:${u.color || '#888'}"></span>${escapeHtml(u.username)}`;
+    const detail = document.createElement('div');
+    detail.className = 'user-detail';
+    detail.style.display = 'none';
+    detail.textContent = u.file ? `Archivo: ${u.file}` : 'Sin archivo abierto';
+    item.appendChild(detail);
+    item.onclick = () => { detail.style.display = detail.style.display === 'none' ? 'block' : 'none'; };
+    el.appendChild(item);
+  });
+});
+
+// ---- Arbol de archivos ----
+fetch(`/api/projects/${code}/tree`).then(r => r.json()).then(data => {
+  renderTree(data.tree, document.getElementById('fileTree'));
+});
+
+function renderTree(nodes, container) {
+  nodes.forEach(node => {
+    if (node.type === 'folder') {
+      const btn = document.createElement('button');
+      btn.className = 'tree-folder-btn';
+      btn.textContent = '📁 ' + node.name;
+      const childrenDiv = document.createElement('div');
+      childrenDiv.className = 'tree-children';
+      renderTree(node.children, childrenDiv);
+      btn.onclick = () => childrenDiv.classList.toggle('open');
+      container.appendChild(btn);
+      container.appendChild(childrenDiv);
+    } else {
+      const btn = document.createElement('button');
+      btn.className = 'tree-file-btn';
+      btn.textContent = '📄 ' + node.name;
+      btn.onclick = () => openFile(node.path);
+      container.appendChild(btn);
+    }
+  });
+}
+
+// ---- Abrir / editar / guardar archivo ----
+const editor = document.getElementById('editor');
+const btnGuardar = document.getElementById('btnGuardar');
+const btnCompartir = document.getElementById('btnCompartir');
+const editorWrapper = document.getElementById('editorWrapper');
+const highlightLayer = document.getElementById('highlightLayer');
+const highlightCode = document.getElementById('highlightCode');
+
+function isCsFile(filePath) {
+  return !!filePath && filePath.toLowerCase().endsWith('.cs');
+}
+
+function updateHighlight() {
+  if (isCsFile(currentFile) && window.Prism) {
+    editorWrapper.classList.add('highlighting');
+    highlightCode.textContent = editor.value;
+    Prism.highlightElement(highlightCode);
+    highlightLayer.scrollTop = editor.scrollTop;
+    highlightLayer.scrollLeft = editor.scrollLeft;
+  } else {
+    editorWrapper.classList.remove('highlighting');
+  }
+}
+editor.addEventListener('scroll', () => {
+  highlightLayer.scrollTop = editor.scrollTop;
+  highlightLayer.scrollLeft = editor.scrollLeft;
+});
+
+async function openFile(filePath) {
+  if (dirty && !confirm('Tenes cambios sin guardar, ¿descartar?')) return;
+  const res = await fetch(`/api/projects/${code}/file?path=${encodeURIComponent(filePath)}`);
+  const data = await res.json();
+  if (!res.ok) return alert(data.error || 'No se pudo abrir el archivo');
+  currentFile = filePath;
+  editor.value = data.content;
+  dirty = false;
+  btnGuardar.style.display = 'none';
+  btnCompartir.style.display = 'inline-block';
+  document.getElementById('currentFileLabel').textContent = filePath;
+  clearRemoteCursorsForOtherFiles();
+  updateHighlight();
+}
+
+editor.addEventListener('input', () => {
+  dirty = true;
+  btnGuardar.style.display = 'inline-block';
+  updateHighlight();
+  if (currentFile) {
+    clearTimeout(window.__contentEmitTimer);
+    window.__contentEmitTimer = setTimeout(() => {
+      socket.emit('content-change', { file: currentFile, content: editor.value });
+    }, 80);
+  }
+});
+
+btnCompartir.onclick = () => {
+  if (!currentFile) return;
+  socket.emit('chat-message', { type: 'file', filePath: currentFile });
+};
+
+// Aplica en vivo lo que escriben otros usuarios en el mismo archivo
+socket.on('content-change', data => {
+  if (data.file !== currentFile) return;
+  const selStart = editor.selectionStart;
+  const selEnd = editor.selectionEnd;
+  const hadFocus = document.activeElement === editor;
+  editor.value = data.content;
+  if (hadFocus) {
+    editor.selectionStart = Math.min(selStart, editor.value.length);
+    editor.selectionEnd = Math.min(selEnd, editor.value.length);
+  }
+  dirty = true;
+  btnGuardar.style.display = 'inline-block';
+  updateHighlight();
+});
+
+btnGuardar.onclick = async () => {
+  if (!currentFile) return;
+  const res = await fetch(`/api/projects/${code}/file`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: currentFile, content: editor.value, username })
+  });
+  if (res.ok) {
+    dirty = false;
+    btnGuardar.style.display = 'none';
+  } else {
+    alert('Error al guardar');
+  }
+};
+
+// ---- Cursor en vivo (posicion aproximada via mirror div) ----
+const mirror = document.createElement('div');
+Object.assign(mirror.style, {
+  position: 'absolute', visibility: 'hidden', whiteSpace: 'pre-wrap',
+  wordWrap: 'break-word', font: getComputedStyle(editor).font,
+  padding: getComputedStyle(editor).padding, width: editor.clientWidth + 'px'
+});
+document.body.appendChild(mirror);
+
+function caretCoords() {
+  const pos = editor.selectionStart;
+  const text = editor.value.substring(0, pos);
+  mirror.style.width = editor.clientWidth + 'px';
+  mirror.innerHTML = escapeHtml(text).replace(/\n/g, '<br>') + '<span id="caretMark">|</span>';
+  const mark = mirror.querySelector('#caretMark');
+  const x = mark.offsetLeft - editor.scrollLeft;
+  const y = mark.offsetTop - editor.scrollTop;
+  return { x, y };
+}
+
+let lastEmit = 0;
+function emitCursor() {
+  if (!currentFile) return;
+  const now = Date.now();
+  if (now - lastEmit < 60) return;
+  lastEmit = now;
+  const { x, y } = caretCoords();
+  socket.emit('cursor-move', { file: currentFile, x, y });
+}
+['click', 'keyup', 'scroll'].forEach(ev => editor.addEventListener(ev, emitCursor));
+
+socket.on('cursor-update', data => {
+  if (data.file !== currentFile) {
+    removeRemoteCursor(data.id);
+    return;
+  }
+  let entry = remoteCursors[data.id];
+  if (!entry) {
+    const el = document.createElement('div');
+    el.className = 'remote-cursor';
+    el.style.background = data.color || '#fff';
+    const label = document.createElement('div');
+    label.className = 'label';
+    label.style.background = data.color || '#333';
+    label.textContent = data.username;
+    el.appendChild(label);
+    document.getElementById('editorWrapper').appendChild(el);
+    entry = { el };
+    remoteCursors[data.id] = entry;
+  }
+  entry.el.style.left = data.x + 'px';
+  entry.el.style.top = data.y + 'px';
+});
+
+socket.on('cursor-left', ({ id }) => removeRemoteCursor(id));
+
+function removeRemoteCursor(id) {
+  if (remoteCursors[id]) {
+    remoteCursors[id].el.remove();
+    delete remoteCursors[id];
+  }
+}
+function clearRemoteCursorsForOtherFiles() {
+  Object.keys(remoteCursors).forEach(id => removeRemoteCursor(id));
+}
+
+// ---- Chat ----
+const chatMessages = document.getElementById('chatMessages');
+const chatInput = document.getElementById('chatInput');
+
+function renderChatMessage(msg) {
+  const div = document.createElement('div');
+  div.className = 'msg';
+  if (msg.type === 'file') {
+    div.innerHTML = `<span class="who">${escapeHtml(msg.username)}</span><br>
+      <button class="chat-file-btn" data-path="${escapeHtml(msg.text)}">📄 ${escapeHtml(msg.text)}</button>`;
+    div.querySelector('.chat-file-btn').onclick = () => openFile(msg.text);
+  } else {
+    div.innerHTML = `<span class="who">${escapeHtml(msg.username)}:</span> ${escapeHtml(msg.text)}`;
+  }
+  chatMessages.appendChild(div);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+socket.on('chat-message', renderChatMessage);
+
+function sendChat() {
+  const text = chatInput.value.trim();
+  if (!text) return;
+  socket.emit('chat-message', { text, type: 'text' });
+  chatInput.value = '';
+}
+document.getElementById('btnChatSend').onclick = sendChat;
+chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
+
+function escapeHtml(str) {
+  return (str || '').replace(/[&<>"']/g, m => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[m]));
+}
+</script>
+</body>
+</html>
