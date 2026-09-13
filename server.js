@@ -130,7 +130,7 @@ app.post('/api/projects/:code/file', (req, res) => {
 
   const projects = loadProjects();
   if (projects[code]) {
-    const entry = { user: username || 'Alguien', action: `modifico ${rel}`, time: Date.now() };
+    const entry = { user: username || 'Alguien', verb: 'modifico', path: rel, type: 'file', time: Date.now() };
     projects[code].activity.push(entry);
     if (projects[code].activity.length > 200) projects[code].activity.shift();
     saveProjects(projects);
@@ -139,6 +139,52 @@ app.post('/api/projects/:code/file', (req, res) => {
 
   io.to(code).emit('file-saved', { path: rel, by: username });
   res.json({ ok: true });
+});
+
+// Crear un archivo o carpeta nuevo dentro de una carpeta del proyecto
+app.post('/api/projects/:code/create', (req, res) => {
+  const code = req.params.code.toUpperCase();
+  const { parentPath, name, type, username } = req.body;
+  const projectDir = path.join(DATA_DIR, code);
+  if (!fs.existsSync(projectDir)) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+  const cleanName = (name || '').trim();
+  if (!cleanName || /[\/\\]/.test(cleanName) || cleanName === '.' || cleanName === '..') {
+    return res.status(400).json({ error: 'Nombre invalido' });
+  }
+  const parentRel = safeRelPath(parentPath || '');
+  const parentDir = path.join(projectDir, parentRel);
+  if (!fs.existsSync(parentDir) || !fs.statSync(parentDir).isDirectory()) {
+    return res.status(400).json({ error: 'Carpeta destino invalida' });
+  }
+  const relPath = parentRel ? `${parentRel}/${cleanName}` : cleanName;
+  const fullPath = path.join(projectDir, relPath);
+  if (fs.existsSync(fullPath)) {
+    return res.status(400).json({ error: 'Ya existe algo con ese nombre ahi' });
+  }
+
+  if (type === 'folder') {
+    fs.mkdirSync(fullPath, { recursive: true });
+  } else {
+    fs.writeFileSync(fullPath, '');
+  }
+
+  const projects = loadProjects();
+  if (projects[code]) {
+    const entry = {
+      user: username || 'Alguien',
+      verb: type === 'folder' ? 'creo la carpeta' : 'agrego el archivo',
+      path: relPath,
+      type: type === 'folder' ? 'folder' : 'file',
+      time: Date.now()
+    };
+    projects[code].activity.push(entry);
+    if (projects[code].activity.length > 200) projects[code].activity.shift();
+    saveProjects(projects);
+    io.to(code).emit('activity-entry', entry);
+  }
+  io.to(code).emit('tree-changed', {});
+  res.json({ ok: true, path: relPath, type: type === 'folder' ? 'folder' : 'file' });
 });
 
 // --- Socket.io: presencia + cursores en vivo ---
