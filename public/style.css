@@ -91,6 +91,15 @@ button.secondary { background: #1f2a3d; color: #cfe3ff; }
   border-bottom: 1px solid #1b2434;
 }
 .activity-log div { margin-bottom: 6px; }
+.activity-log .commit-line { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.activity-log .commit-text { flex: 1; }
+.btn-goto {
+  flex-shrink: 0;
+  background: #1f2a3d; color: #cfe3ff;
+  font-size: 10px; padding: 3px 7px;
+  border-radius: 6px;
+}
+.btn-goto:hover { background: #26334a; }
 
 .chat-box {
   flex: 1;
@@ -147,6 +156,35 @@ button.secondary { background: #1f2a3d; color: #cfe3ff; }
 .tree-folder-btn:hover, .tree-file-btn:hover { background: #182236; }
 .tree-children { margin-left: 14px; display: none; }
 .tree-children.open { display: block; }
+
+.tree-row { display: flex; align-items: center; gap: 4px; }
+.tree-row .tree-folder-btn { flex: 1; }
+.btn-add {
+  flex-shrink: 0;
+  background: #16211a; color: #7fe0a0;
+  font-size: 11px; padding: 3px 7px;
+  border-radius: 6px;
+}
+.btn-add:hover { background: #1d2e22; }
+.add-panel {
+  display: none;
+  margin: 4px 0 6px 14px;
+  padding: 6px;
+  background: #101725;
+  border: 1px solid #223047;
+  border-radius: 8px;
+}
+.add-panel.open { display: block; }
+.add-panel input {
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.add-panel .add-panel-actions { display: flex; gap: 6px; }
+.add-panel .add-panel-actions button { padding: 5px 10px; font-size: 12px; }
+
+.root-add-row { padding: 4px 6px 10px 6px; }
+.root-add-row .btn-add { width: 100%; text-align: center; }
 
 .editor-area { flex: 1; display: flex; flex-direction: column; position: relative; }
 .editor-header {
